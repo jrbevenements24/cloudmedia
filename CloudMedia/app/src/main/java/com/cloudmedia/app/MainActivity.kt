@@ -287,6 +287,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             var sent = 0; var skipped = 0; var failed = 0
+            var firstError: String? = null
             val uploadedUris = mutableListOf<Uri>()
             for ((i, m) in sel.withIndex()) {
                 progress.progress = i
@@ -296,16 +297,24 @@ class MainActivity : AppCompatActivity() {
                     selCount.text = "Envoi… ${i + 1}/${sel.size}  (déjà : $skipped)"
                     continue
                 }
-                val ok = withContext(Dispatchers.IO) {
+                val res = withContext(Dispatchers.IO) {
                     uploadOne(m, cfgUploadUrl!!, cfgToken ?: "", device)
                 }
-                if (ok) { prefs.edit().putBoolean(key, true).apply(); sent++; uploadedUris.add(m.uri) }
-                else failed++
+                if (res.ok) { prefs.edit().putBoolean(key, true).apply(); sent++; uploadedUris.add(m.uri) }
+                else { failed++; if (firstError == null) firstError = "Fichier : ${m.name}\n${res.detail}" }
                 selCount.text = "Envoi… ${i + 1}/${sel.size}  \u2713 $sent  \u23ed $skipped  \u2717 $failed"
             }
             progress.progress = sel.size
             progress.visibility = android.view.View.GONE
             selCount.text = "Terminé : $sent envoyés, $skipped déjà là, $failed échoués"
+
+            if (failed > 0 && firstError != null) {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Détail du 1er échec")
+                    .setMessage(firstError)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
 
             if (optDeleteAfter && uploadedUris.isNotEmpty()) {
                 requestDelete(uploadedUris)
@@ -328,12 +337,12 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { false }
     }
 
-    private fun uploadOne(m: MediaItem, url: String, token: String, device: String): Boolean {
+    private fun uploadOne(m: MediaItem, url: String, token: String, device: String): UploadResult {
         return try {
             val tmp = File(cacheDir, m.name)
             contentResolver.openInputStream(m.uri)?.use { input ->
                 FileOutputStream(tmp).use { output -> input.copyTo(output) }
-            } ?: return false
+            } ?: return UploadResult(false, "Lecture du fichier impossible sur le téléphone")
 
             val mime = if (m.isVideo) "video/*" else "image/*"
             val body = MultipartBody.Builder()
@@ -345,9 +354,12 @@ class MainActivity : AppCompatActivity() {
             val req = Request.Builder().url(url).post(body).build()
             client.newCall(req).execute().use { resp ->
                 tmp.delete()
-                resp.isSuccessful
+                val bodyStr = (resp.body?.string() ?: "").take(400)
+                UploadResult(resp.isSuccessful, "Code HTTP ${resp.code}\nRéponse serveur :\n$bodyStr")
             }
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            UploadResult(false, "Erreur réseau : ${e.javaClass.simpleName}\n${e.message ?: ""}")
+        }
     }
 
     // ---------- suppression ----------
