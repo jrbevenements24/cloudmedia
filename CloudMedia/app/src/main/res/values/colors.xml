@@ -1,0 +1,9 @@
+<resources>
+    <color name="blue">#2F6DF0</color>
+    <color name="bg">#EEF1F5</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text">#1A1D24</color>
+    <color name="muted">#6B7280</color>
+    <color name="danger">#E5484D</color>
+    <color name="tabbg">#F1F3F7</color>
+</resources>
