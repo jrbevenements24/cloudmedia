@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     // config chargée
     private var cfgUploadUrl: String? = null
     private var cfgToken: String? = null
+    private val accountUid by lazy { prefs.getString("account_uid", "") ?: "" }
 
     // suppression en attente (après envoi ou directe)
     private var pendingDeleteUris: List<Uri> = emptyList()
@@ -96,12 +97,34 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Pas de compte connecté ? → écran de connexion
+        if ((prefs.getString("account_uid", null) ?: "").isEmpty()) {
+            startActivity(android.content.Intent(this, LoginActivity::class.java))
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_main)
 
         recycler = findViewById(R.id.recycler)
         selCount = findViewById(R.id.selCount)
         netState = findViewById(R.id.netState)
         queueBanner = findViewById(R.id.queueBanner)
+        // Appui long sur l'indicateur réseau = se déconnecter du compte
+        netState.setOnLongClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Se déconnecter ?")
+                .setMessage("Compte : ${prefs.getString("account_email", "")}")
+                .setPositiveButton("Déconnexion") { _, _ ->
+                    prefs.edit().remove("account_uid").remove("account_email").apply()
+                    startActivity(android.content.Intent(this, LoginActivity::class.java))
+                    finish()
+                }
+                .setNegativeButton("Annuler", null)
+                .show()
+            true
+        }
         selSize  = findViewById(R.id.selSize)
         devName  = findViewById(R.id.devName)
         totalCnt = findViewById(R.id.totalCnt)
@@ -430,6 +453,7 @@ class MainActivity : AppCompatActivity() {
             val body = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("token", token)
+                .addFormDataPart("uid", accountUid)
                 .addFormDataPart("device", device)
                 .addFormDataPart("media", m.name, tmp.asRequestBody(mime.toMediaTypeOrNull()))
                 .build()
