@@ -51,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         .build()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val prefs by lazy { getSharedPreferences("cloudmedia", MODE_PRIVATE) }
+    private val queue by lazy { UploadQueue(this) }
 
     private lateinit var recycler: RecyclerView
     private lateinit var adapter: MediaAdapter
@@ -61,6 +62,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSend: Button
     private lateinit var btnDel: Button
     private lateinit var progress: ProgressBar
+    private lateinit var netState: TextView
+    private lateinit var queueBanner: TextView
 
     private var allMedia: List<MediaItem> = emptyList()
     private var filter = "all"      // all | photo | video
@@ -97,6 +100,8 @@ class MainActivity : AppCompatActivity() {
 
         recycler = findViewById(R.id.recycler)
         selCount = findViewById(R.id.selCount)
+        netState = findViewById(R.id.netState)
+        queueBanner = findViewById(R.id.queueBanner)
         selSize  = findViewById(R.id.selSize)
         devName  = findViewById(R.id.devName)
         totalCnt = findViewById(R.id.totalCnt)
@@ -167,7 +172,12 @@ class MainActivity : AppCompatActivity() {
         scope.launch {
             val list = withContext(Dispatchers.IO) { queryMedia() }
             allMedia = list
+            // marque visuellement les médias en attente (badge rouge réutilisé comme "en attente")
+            val pending = queue.ids()
+            allMedia.forEach { if (it.id in pending && !it.uploaded) it.failed = true }
             rebuild()
+            updateQueueBanner()
+            flushQueueIfWifi()
         }
     }
 
@@ -271,14 +281,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------- envoi ----------
+    private val LIMITE_MOBILE = 10L * 1024 * 1024  // 10 Mo en 4G/5G
+
     private fun sendSelection() {
         val sel = selected()
         if (sel.isEmpty()) return
+        processUploads(sel, manuel = true)
+    }
+
+    /**
+     * Envoie une liste de médias.
+     * En 4G/5G : photos <= 10 Mo partent ; vidéos et fichiers > 10 Mo -> file d'attente.
+     * En WiFi : tout part.
+     * Les échecs rejoignent la file d'attente pour réessai.
+     */
+    private fun processUploads(items: List<MediaItem>, manuel: Boolean) {
+        if (items.isEmpty()) return
         val device = currentDeviceName()
+        val wifi = Net.isWifi(this)
         btnSend.isEnabled = false
         btnDel.isEnabled = false
         progress.visibility = android.view.View.VISIBLE
-        progress.max = sel.size
+        progress.max = items.size
         progress.progress = 0
 
         scope.launch {
@@ -291,34 +315,54 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
             }
-            var sent = 0; var skipped = 0; var failed = 0
+            var sent = 0; var skipped = 0; var failed = 0; var queued = 0
             var firstError: String? = null
             val uploadedUris = mutableListOf<Uri>()
-            for ((i, m) in sel.withIndex()) {
+
+            for ((i, m) in items.withIndex()) {
                 progress.progress = i
                 val key = "up_" + m.id
+
                 if (prefs.getBoolean(key, false)) {
-                    skipped++; uploadedUris.add(m.uri)
-                    selCount.text = "Envoi… ${i + 1}/${sel.size}  (déjà : $skipped)"
+                    skipped++; uploadedUris.add(m.uri); queue.remove(m.id)
                     continue
                 }
+
+                // Règle réseau : en mobile, on met de côté vidéos et gros fichiers
+                if (!wifi && (m.isVideo || m.size > LIMITE_MOBILE)) {
+                    queue.add(m.id); m.failed = false; queued++
+                    adapter.notifyDataSetChanged()
+                    selCount.text = "Tri… ${i + 1}/${items.size}  \u2713 $sent  \u23f8 $queued en attente"
+                    continue
+                }
+
                 val res = withContext(Dispatchers.IO) {
                     uploadOne(m, cfgUploadUrl!!, cfgToken ?: "", device)
                 }
                 if (res.ok) {
                     prefs.edit().putBoolean(key, true).apply()
                     m.uploaded = true; m.failed = false; m.selected = false
+                    queue.remove(m.id)
                     sent++; uploadedUris.add(m.uri)
                 } else {
                     m.failed = true
+                    queue.add(m.id)   // échec -> file d'attente pour réessai
                     failed++; if (firstError == null) firstError = "Fichier : ${m.name}\n${res.detail}"
                 }
                 adapter.notifyDataSetChanged()
-                selCount.text = "Envoi… ${i + 1}/${sel.size}  \u2713 $sent  \u23ed $skipped  \u2717 $failed"
+                selCount.text = "Envoi… ${i + 1}/${items.size}  \u2713 $sent  \u2717 $failed  \u23f8 $queued"
             }
-            progress.progress = sel.size
+            progress.progress = items.size
             progress.visibility = android.view.View.GONE
-            selCount.text = "Terminé : $sent envoyés, $skipped déjà là, $failed échoués"
+
+            val resume = buildString {
+                append("Terminé : $sent envoyé(s)")
+                if (skipped > 0) append(", $skipped déjà là")
+                if (failed > 0) append(", $failed échec(s)")
+                if (queued > 0) append(", $queued en attente de WiFi")
+            }
+            selCount.text = resume
+            updateQueueBanner()
 
             if (failed > 0 && firstError != null) {
                 AlertDialog.Builder(this@MainActivity)
@@ -333,6 +377,32 @@ class MainActivity : AppCompatActivity() {
             } else {
                 btnSend.isEnabled = true; btnDel.isEnabled = true
             }
+        }
+    }
+
+    /** Vide la file d'attente automatiquement si on est en WiFi. */
+    private fun flushQueueIfWifi() {
+        if (!Net.isWifi(this)) { updateQueueBanner(); return }
+        val pending = queue.ids()
+        if (pending.isEmpty()) { updateQueueBanner(); return }
+        val items = allMedia.filter { it.id in pending && !it.uploaded }
+        if (items.isEmpty()) { updateQueueBanner(); return }
+        toast("WiFi détecté — envoi des ${items.size} média(s) en attente")
+        processUploads(items, manuel = false)
+    }
+
+    private fun updateQueueBanner() {
+        val n = queue.count()
+        val wifi = Net.isWifi(this)
+        netState.text = if (wifi) "WiFi" else "4G/5G"
+        if (n > 0) {
+            queueBanner.visibility = android.view.View.VISIBLE
+            queueBanner.text = if (wifi)
+                "$n média(s) en attente — envoi en cours…"
+            else
+                "$n média(s) en attente de WiFi (vidéos / gros fichiers)"
+        } else {
+            queueBanner.visibility = android.view.View.GONE
         }
     }
 
@@ -515,6 +585,14 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 toast("Impossible de lancer l'installation : ${e.message}")
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::netState.isInitialized) {
+            updateQueueBanner()
+            flushQueueIfWifi()
         }
     }
 
