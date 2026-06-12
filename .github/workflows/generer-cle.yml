@@ -1,0 +1,35 @@
+name: Generer la cle
+
+on:
+  workflow_dispatch:
+
+jobs:
+  keygen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Generer le keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore cloudmedia.keystore \
+            -alias cloudmedia \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass CloudMedia2026 \
+            -keypass CloudMedia2026 \
+            -dname "CN=Cloud Media, OU=App, O=CloudMedia, L=Tourtoirac, S=Dordogne, C=FR"
+
+      - name: Encoder en base64 (pour copier dans les secrets)
+        run: base64 -w0 cloudmedia.keystore > cloudmedia.keystore.b64
+
+      - name: Mettre a disposition le keystore
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudmedia-keystore
+          path: |
+            cloudmedia.keystore
+            cloudmedia.keystore.b64
