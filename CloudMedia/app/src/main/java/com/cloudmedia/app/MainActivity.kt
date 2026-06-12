@@ -204,7 +204,8 @@ class MainActivity : AppCompatActivity() {
                         isVideo = isVideo,
                         size = c.getLong(sizeCol),
                         durationMs = if (isVideo) c.getLong(durCol) else 0L,
-                        dateAddedSec = c.getLong(dateCol)
+                        dateAddedSec = c.getLong(dateCol),
+                        uploaded = prefs.getBoolean("up_$id", false)
                     )
                 )
             }
@@ -300,8 +301,15 @@ class MainActivity : AppCompatActivity() {
                 val res = withContext(Dispatchers.IO) {
                     uploadOne(m, cfgUploadUrl!!, cfgToken ?: "", device)
                 }
-                if (res.ok) { prefs.edit().putBoolean(key, true).apply(); sent++; uploadedUris.add(m.uri) }
-                else { failed++; if (firstError == null) firstError = "Fichier : ${m.name}\n${res.detail}" }
+                if (res.ok) {
+                    prefs.edit().putBoolean(key, true).apply()
+                    m.uploaded = true; m.failed = false; m.selected = false
+                    sent++; uploadedUris.add(m.uri)
+                } else {
+                    m.failed = true
+                    failed++; if (firstError == null) firstError = "Fichier : ${m.name}\n${res.detail}"
+                }
+                adapter.notifyDataSetChanged()
                 selCount.text = "Envoi… ${i + 1}/${sel.size}  \u2713 $sent  \u23ed $skipped  \u2717 $failed"
             }
             progress.progress = sel.size

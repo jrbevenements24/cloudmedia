@@ -16,5 +16,7 @@ data class MediaItem(
     val size: Long,
     val durationMs: Long,
     val dateAddedSec: Long,
-    var selected: Boolean = false
+    var selected: Boolean = false,
+    var uploaded: Boolean = false,
+    var failed: Boolean = false
 ) : GalleryRow()

@@ -53,11 +53,23 @@ class MediaAdapter(
         private val check: View = v.findViewById(R.id.check)
         private val videoBadge: View = v.findViewById(R.id.videoBadge)
         private val duration: TextView = v.findViewById(R.id.duration)
+        private val uploadedBadge: View = v.findViewById(R.id.uploadedBadge)
+        private val failedBadge: View = v.findViewById(R.id.failedBadge)
 
         fun bind(item: MediaItem) {
             Glide.with(img).load(item.uri).centerCrop().into(img)
+
             check.visibility = if (item.selected) View.VISIBLE else View.GONE
-            img.alpha = if (item.selected) 0.65f else 1f
+            uploadedBadge.visibility = if (item.uploaded) View.VISIBLE else View.GONE
+            failedBadge.visibility = if (!item.uploaded && item.failed) View.VISIBLE else View.GONE
+
+            // grisé si déjà sauvegardé, assombri si sélectionné
+            img.alpha = when {
+                item.uploaded -> 0.45f
+                item.selected -> 0.65f
+                else -> 1f
+            }
+
             if (item.isVideo) {
                 videoBadge.visibility = View.VISIBLE
                 duration.visibility = View.VISIBLE
@@ -66,10 +78,15 @@ class MediaAdapter(
                 videoBadge.visibility = View.GONE
                 duration.visibility = View.GONE
             }
+
             itemView.setOnClickListener {
                 item.selected = !item.selected
                 check.visibility = if (item.selected) View.VISIBLE else View.GONE
-                img.alpha = if (item.selected) 0.65f else 1f
+                img.alpha = when {
+                    item.uploaded -> 0.45f
+                    item.selected -> 0.65f
+                    else -> 1f
+                }
                 onToggle(item)
             }
         }

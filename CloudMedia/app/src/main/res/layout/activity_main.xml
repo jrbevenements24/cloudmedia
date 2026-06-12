@@ -252,26 +252,26 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
             <Button
-                android:id="@+id/btnSend"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginEnd="5dp"
-                android:background="@drawable/bg_send"
-                android:text="Envoyer"
-                android:textColor="#FFFFFF"
-                android:textStyle="bold"
-                android:textAllCaps="false"
-                android:stateListAnimator="@null" />
-            <Button
                 android:id="@+id/btnDel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="5dp"
+                android:layout_marginEnd="5dp"
                 android:background="@drawable/bg_delete"
                 android:text="Supprimer"
                 android:textColor="@color/danger"
+                android:textStyle="bold"
+                android:textAllCaps="false"
+                android:stateListAnimator="@null" />
+            <Button
+                android:id="@+id/btnSend"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="5dp"
+                android:background="@drawable/bg_send"
+                android:text="Envoyer"
+                android:textColor="#FFFFFF"
                 android:textStyle="bold"
                 android:textAllCaps="false"
                 android:stateListAnimator="@null" />
