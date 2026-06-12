@@ -2,11 +2,13 @@ package com.cloudmedia.app
 
 import android.app.Activity
 import android.content.ContentUris
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.Settings
 import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
@@ -18,6 +20,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.CoroutineScope
@@ -141,6 +144,7 @@ class MainActivity : AppCompatActivity() {
         btnDel.setOnClickListener { deleteSelection() }
 
         askPermissions()
+        checkForUpdate()
     }
 
     private fun askPermissions() {
@@ -419,6 +423,100 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+
+    // ---------- mise à jour de l'app ----------
+    private fun currentVersionCode(): Int {
+        return try {
+            val p = packageManager.getPackageInfo(packageName, 0)
+            if (Build.VERSION.SDK_INT >= 28) p.longVersionCode.toInt() else @Suppress("DEPRECATION") p.versionCode
+        } catch (e: Exception) { 1 }
+    }
+
+    private fun checkForUpdate() {
+        scope.launch {
+            val info = withContext(Dispatchers.IO) {
+                try {
+                    val req = Request.Builder().url(configUrl).get().build()
+                    client.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) return@withContext null
+                        JSONObject(resp.body?.string() ?: return@withContext null)
+                    }
+                } catch (e: Exception) { null }
+            } ?: return@launch
+
+            val latest = info.optInt("latest_version_code", 0)
+            val apkUrl = info.optString("apk_url", "")
+            val notes  = info.optString("update_notes", "")
+            val name   = info.optString("latest_version_name", "")
+
+            if (latest > currentVersionCode() && apkUrl.isNotEmpty()) {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Mise à jour disponible" + if (name.isNotEmpty()) " ($name)" else "")
+                    .setMessage(if (notes.isNotEmpty()) notes else "Une nouvelle version de Cloud Media est disponible. L'installer ?")
+                    .setPositiveButton("Mettre à jour") { _, _ -> ensureInstallPermissionThen(apkUrl) }
+                    .setNegativeButton("Plus tard", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun ensureInstallPermissionThen(apkUrl: String) {
+        // Android 8+ : l'app doit être autorisée à installer des paquets
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+            AlertDialog.Builder(this)
+                .setTitle("Autorisation requise")
+                .setMessage("Pour installer la mise à jour, autorise Cloud Media à installer des applications, puis relance la mise à jour.")
+                .setPositiveButton("Ouvrir les réglages") { _, _ ->
+                    val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                    startActivity(i)
+                }
+                .setNegativeButton("Annuler", null)
+                .show()
+            return
+        }
+        downloadAndInstall(apkUrl)
+    }
+
+    private fun downloadAndInstall(apkUrl: String) {
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("Téléchargement…")
+            .setMessage("Récupération de la nouvelle version, patiente.")
+            .setCancelable(false)
+            .create()
+        dlg.show()
+
+        scope.launch {
+            val apk = withContext(Dispatchers.IO) {
+                try {
+                    val req = Request.Builder().url(apkUrl).get().build()
+                    client.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) return@withContext null
+                        val file = File(cacheDir, "update.apk")
+                        resp.body?.byteStream()?.use { input ->
+                            FileOutputStream(file).use { out -> input.copyTo(out) }
+                        } ?: return@withContext null
+                        file
+                    }
+                } catch (e: Exception) { null }
+            }
+            dlg.dismiss()
+            if (apk == null) {
+                toast("Échec du téléchargement de la mise à jour.")
+                return@launch
+            }
+            // Lancer l'installation (Android prend le relais avec sa propre confirmation)
+            try {
+                val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", apk)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                toast("Impossible de lancer l'installation : ${e.message}")
+            }
+        }
+    }
 
     override fun onDestroy() {
         super.onDestroy()
