@@ -6,6 +6,8 @@ sealed class GalleryRow
 
 data class DateHeader(val label: String) : GalleryRow()
 
+data class UploadResult(val ok: Boolean, val detail: String)
+
 data class MediaItem(
     val id: Long,
     val uri: Uri,
